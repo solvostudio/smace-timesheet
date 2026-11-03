@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import calendar
 import hmac
+import importlib
 import io
 import uuid
 from datetime import date, datetime
@@ -23,6 +24,15 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+import ts.calcoli
+import ts.store
+import ts.theme
+
+# dopo un push Streamlit Cloud riesegue app.py ma tiene in memoria i vecchi moduli di ts/:
+# ricaricarli qui evita di dover riavviare l'app a mano a ogni pubblicazione
+for _modulo in (ts.store, ts.calcoli, ts.theme):
+    importlib.reload(_modulo)
 
 from ts.calcoli import (STATI_SPESA, commessa_di, importi, num, ore_numeriche, riepilogo_mese, spese_valide, stato,
                         tipo_di)
