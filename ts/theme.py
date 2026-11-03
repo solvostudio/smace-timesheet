@@ -160,6 +160,39 @@ h4 {{ font-size: 1.1rem; }}
 .smc-card-title {{ font-family: var(--font-display); font-size: 1.2rem; font-weight: 500; color: var(--forest); }}
 .smc-card-sub {{ font-size: 13px; color: var(--muted); margin-top: 2px; }}
 
+/* Tabella del riepilogo */
+.smc-table {{
+  width: 100%; border-collapse: separate; border-spacing: 0; background: #fff;
+  border: 1px solid var(--line); border-radius: 15px; overflow: hidden; margin: 6px 0 14px; font-size: 14px;
+}}
+.smc-table th {{
+  text-align: left; padding: 10px 14px; background: var(--cream); border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: 1.8px;
+  text-transform: uppercase; color: var(--sage);
+}}
+.smc-table td {{ padding: 10px 14px; border-bottom: 1px solid var(--light-sage); color: var(--ink); }}
+.smc-table tr:last-child td {{ border-bottom: none; }}
+.smc-table .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+.smc-table td.neg {{ color: var(--rosso); font-weight: 600; }}
+
+/* Calendario dei giorni del mese */
+.smc-cal {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-bottom: 14px; }}
+.smc-cal-h {{
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--sage); text-align: center;
+}}
+.smc-cal-d {{
+  background: #fff; border: 1px solid var(--line); border-radius: 10px; min-height: 48px; padding: 5px 8px;
+  display: flex; flex-direction: column; justify-content: space-between;
+}}
+.smc-cal-d span {{ font-size: 12px; color: var(--muted); }}
+.smc-cal-d b {{ font-size: 13px; font-weight: 600; color: var(--forest); text-align: right; }}
+.smc-cal-d.weekend {{ background: var(--cream); }}
+.smc-cal-d.piena {{ background: var(--lime); border-color: var(--lime); }}
+.smc-cal-d.piena span {{ color: var(--forest); }}
+.smc-cal-d.oggi {{ outline: 2px solid var(--forest); outline-offset: -2px; }}
+.smc-cal-d.fuori {{ background: transparent; border: none; }}
+
 /* Pillole di stato */
 .smc-chip {{
   display: inline-block; padding: 4px 12px; border-radius: 20px;

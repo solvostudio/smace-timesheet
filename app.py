@@ -23,7 +23,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from ts.calcoli import num, ore_numeriche, riepilogo_mese, stato
+from ts.calcoli import commessa_di, num, ore_numeriche, riepilogo_mese, stato
 from ts.store import ArchivioGitHub, ArchivioLocale
 from ts.theme import (CSS, CSS_ACCESSO, CREAM, DEEP_FOREST, PLOTLY_TEMPLATE_NAME, ROSSO, SAGE_GREEN, chip,
                       etichetta_sezione, intestazione, logo, register_plotly_template)
@@ -57,6 +57,8 @@ def leggi(nome: str) -> pd.DataFrame:
 def scrivi(nome: str, fn, messaggio: str) -> None:
     archivio().modifica(nome, fn, messaggio)
     leggi.clear()
+    # le tabelle modificabili ripartono dai dati nuovi, senza modifiche in sospeso
+    st.session_state["versione"] = st.session_state.get("versione", 0) + 1
 
 
 def aggiungi(nome: str, riga: dict, messaggio: str) -> None:
@@ -95,6 +97,24 @@ def ore_fmt(v) -> str:
     if v is None or pd.isna(v):
         return "—"
     return f"{v:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".").removesuffix(",0")
+
+
+def quante(n: float, singolare: str, plurale: str) -> str:
+    """quante(1, "ora", "ore") → '1 ora', quante(2.5, "ora", "ore") → '2,5 ore'."""
+    return f"{ore_fmt(n)} {singolare if n == 1 else plurale}"
+
+
+def data_it(s) -> str:
+    """'2026-11-03' → '03/11/2026', '2026-11-03 11:43' → '03/11/2026 11:43'."""
+    s = str(s)
+    try:
+        return datetime.fromisoformat(s).strftime("%d/%m/%Y %H:%M" if len(s) > 10 else "%d/%m/%Y")
+    except ValueError:
+        return s
+
+
+def come_date(col: pd.Series) -> pd.Series:
+    return pd.to_datetime(col, errors="coerce").dt.date
 
 
 # ------------------------------------------------------------------ accesso
@@ -179,6 +199,16 @@ def elenco_commesse(utente: dict, persone, commesse, reg) -> None:
     if c2.button("Nuova commessa", type="primary", width="stretch"):
         st.session_state["nuova"] = True
         st.rerun()
+    if not utente["admin"] and commessa_di(utente["nome"], mese_corrente(), commesse) is None:
+        with st.container(border=True):
+            a, b = st.columns([3, 1], vertical_alignment="center")
+            a.markdown(f'<div class="smc-card-title">Non hai ancora aperto la commessa di '
+                       f'{etichetta_mese(mese_corrente())}</div><div class="smc-card-sub">'
+                       "Aprila con il plafond del tuo contratto per iniziare a registrare le ore.</div>",
+                       unsafe_allow_html=True)
+            if b.button("Apri commessa", type="primary", width="stretch", key="apri_mese"):
+                st.session_state["nuova"] = True
+                st.rerun()
 
     if viste.empty:
         st.caption("Nessuna commessa. A inizio mese si apre quella del mese con \"Nuova commessa\".")
@@ -237,10 +267,11 @@ def dettaglio_commessa(comm: pd.Series, reg) -> None:
     torna_all_elenco()
     persona, mese = comm["persona"], comm["mese"]
     st.markdown(intestazione(f"Commessa · {periodo(mese)}", f"{persona} · {etichetta_mese(mese)}",
-                             f"Aperta il {comm['aperta_il']} da {comm['aperta_da']}"), unsafe_allow_html=True)
+                             f"Aperta il {data_it(comm['aperta_il'])} da {comm['aperta_da']}"), unsafe_allow_html=True)
     mie = reg[reg["commessa"] == comm["id"]]
     barra_plafond(float(ore_numeriche(mie)["ore"].sum()), num(comm["plafond"]))
     modifica_plafond(comm)
+    calendario_mese(mie, mese)
 
     primo, ultimo = limiti_mese(mese)
     with st.form("nuove_ore", clear_on_submit=True):
@@ -248,11 +279,12 @@ def dettaglio_commessa(comm: pd.Series, reg) -> None:
         c1, c2, c3 = st.columns([1, 3, 1])
         giorno = c1.date_input("Giorno", value=min(max(date.today(), primo), ultimo),
                                min_value=primo, max_value=ultimo, format="DD/MM/YYYY")
-        att = c2.text_input("Attività", placeholder="es. Chiusura contabile di settembre")
+        att = c2.selectbox("Attività", attivita_recenti(persona, reg), index=None, accept_new_options=True,
+                           placeholder="Scrivi l'attività o scegline una già usata")
         ore = c3.number_input("Ore", min_value=0.5, max_value=24.0, value=1.0, step=0.5)
         note = st.text_input("Note (facoltative)")
         if st.form_submit_button("Registra", type="primary"):
-            if not att.strip():
+            if not (att or "").strip():
                 st.error("Scrivi l'attività svolta.")
             else:
                 aggiungi("registrazioni", {
@@ -260,7 +292,8 @@ def dettaglio_commessa(comm: pd.Series, reg) -> None:
                     "data": giorno.isoformat(), "attivita": att.strip(), "ore": str(ore),
                     "note": note.strip(), "inserita_il": adesso()},
                     f"{persona}: {ore_fmt(ore)} h il {giorno.isoformat()}")
-                st.session_state["esito"] = f"Registrate {ore_fmt(ore)} ore il {giorno.strftime('%d/%m')}."
+                st.session_state["esito"] = (f"{'Registrata' if ore == 1 else 'Registrate'} "
+                                             f"{quante(ore, 'ora', 'ore')} il {giorno.strftime('%d/%m')}.")
                 st.rerun()
     if msg := st.session_state.pop("esito", None):
         st.success(msg)
@@ -269,22 +302,127 @@ def dettaglio_commessa(comm: pd.Series, reg) -> None:
         st.caption("Nessuna ora registrata in questa commessa.")
         return
     st.markdown(etichetta_sezione("Ore registrate"), unsafe_allow_html=True)
-    tab = mie[["id", "data", "attivita", "ore", "note"]].sort_values("data").copy()
+    st.caption("Per correggere una riga modificala direttamente nella tabella e premi \"Salva modifiche\".")
+    tab = tabella_registrazioni(mie)
+    ed = st.data_editor(tab, hide_index=True, width="stretch", disabled=["id"],
+                        column_config={
+                            "id": None,
+                            "elimina": st.column_config.CheckboxColumn("Elimina", width="small"),
+                            "data": st.column_config.DateColumn("Giorno", format="DD/MM/YYYY", required=True,
+                                                                min_value=primo, max_value=ultimo),
+                            "attivita": st.column_config.TextColumn("Attività", required=True, width="large"),
+                            "ore": st.column_config.NumberColumn("Ore", min_value=0.5, max_value=24.0, step=0.5,
+                                                                 format="localized", required=True),
+                            "note": st.column_config.TextColumn("Note")},
+                        key=f"ed_{comm['id']}_{st.session_state.get('versione', 0)}")
+    salva_modifiche(comm, tab, ed)
+    conferma_eliminazione(comm, mie, ed)
+
+
+def attivita_recenti(persona: str, reg: pd.DataFrame, quante: int = 30) -> list[str]:
+    """Attività già scritte dalla persona, dalla più recente: si scelgono invece di riscriverle."""
+    sue = reg[reg["persona"] == persona].sort_values("inserita_il", ascending=False)
+    return list(dict.fromkeys(a.strip() for a in sue["attivita"] if a.strip()))[:quante]
+
+
+def tabella_registrazioni(mie: pd.DataFrame) -> pd.DataFrame:
+    tab = mie[["id", "data", "attivita", "ore", "note"]].sort_values(["data"]).copy()
+    tab["data"] = come_date(tab["data"])
     tab["ore"] = tab["ore"].map(num)
     tab.insert(0, "elimina", False)
-    ed = st.data_editor(tab, hide_index=True, width="stretch", disabled=list(tab.columns[1:]),
-                        column_config={"id": None, "elimina": st.column_config.CheckboxColumn("Elimina"),
-                                       "data": "Giorno", "attivita": "Attività", "ore": "Ore", "note": "Note"},
-                        key=f"ed_{comm['id']}")
-    da_togliere = set(ed.loc[ed["elimina"], "id"])
-    if da_togliere and st.button(f"Elimina {len(da_togliere)} registrazioni selezionate"):
-        scrivi("registrazioni", lambda df: df[~df["id"].isin(da_togliere)],
-               f"{persona}: eliminate {len(da_togliere)} registrazioni ({mese})")
+    return tab.reset_index(drop=True)
+
+
+CAMPI_REG = ["data", "attivita", "ore", "note"]
+
+
+def righe_modificate(prima: pd.DataFrame, dopo: pd.DataFrame) -> pd.DataFrame:
+    a = prima.set_index("id")[CAMPI_REG].fillna("").astype(str)
+    b = dopo.set_index("id")[CAMPI_REG].fillna("").astype(str)
+    diverse = (a != b.loc[a.index]).any(axis=1)
+    return dopo[dopo["id"].isin(diverse[diverse].index)]
+
+
+def salva_modifiche(comm: pd.Series, prima: pd.DataFrame, dopo: pd.DataFrame) -> None:
+    mod = righe_modificate(prima, dopo)
+    if mod.empty:
+        return
+    primo, ultimo = limiti_mese(comm["mese"])
+    errori = [r for _, r in mod.iterrows()
+              if not str(r["attivita"] or "").strip() or num(r["ore"]) is None or not 0 < num(r["ore"]) <= 24
+              or pd.isna(r["data"]) or not primo <= r["data"] <= ultimo]
+    if errori:
+        st.error("Controlla le righe modificate: servono giorno del mese, attività e ore (tra 0,5 e 24).")
+        return
+    if st.button(f"Salva modifiche ({quante(len(mod), 'riga', 'righe')})", type="primary"):
+        nuovi = {r["id"]: [r["data"].isoformat(), str(r["attivita"]).strip(), str(float(r["ore"])),
+                           str(r["note"] or "").strip()] for _, r in mod.iterrows()}
+
+        def applica(df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            for i, valori in nuovi.items():
+                df.loc[df["id"] == i, CAMPI_REG] = valori
+            return df
+
+        scrivi("registrazioni", applica, f"{comm['persona']}: modificate {len(nuovi)} registrazioni ({comm['mese']})")
+        st.session_state["esito"] = "Modifiche salvate."
         st.rerun()
 
 
+def conferma_eliminazione(comm: pd.Series, mie: pd.DataFrame, ed: pd.DataFrame) -> None:
+    da_togliere = sorted(ed.loc[ed["elimina"], "id"])
+    if not da_togliere:
+        st.session_state.pop("da_eliminare", None)
+        return
+    if st.session_state.get("da_eliminare") != da_togliere:
+        if st.button(f"Elimina {quante(len(da_togliere), 'registrazione selezionata', 'registrazioni selezionate')}"):
+            st.session_state["da_eliminare"] = da_togliere
+            st.rerun()
+        return
+    ore = ore_numeriche(mie[mie["id"].isin(da_togliere)])["ore"].sum()
+    st.warning(f"Stai per eliminare {quante(len(da_togliere), 'registrazione', 'registrazioni')} "
+               f"({quante(ore, 'ora', 'ore')}). "
+               "L'operazione non si può annullare.")
+    c1, c2, _ = st.columns([1, 1, 3])
+    if c1.button("Sì, elimina", type="primary", width="stretch"):
+        scrivi("registrazioni", lambda df: df[~df["id"].isin(da_togliere)],
+               f"{comm['persona']}: eliminate {len(da_togliere)} registrazioni ({comm['mese']})")
+        st.session_state.pop("da_eliminare", None)
+        st.session_state["esito"] = ("Eliminata 1 registrazione." if len(da_togliere) == 1
+                                     else f"Eliminate {len(da_togliere)} registrazioni.")
+        st.rerun()
+    if c2.button("Annulla", width="stretch"):
+        st.session_state.pop("da_eliminare", None)
+        st.session_state["versione"] = st.session_state.get("versione", 0) + 1  # toglie le spunte
+        st.rerun()
+
+
+def calendario_mese(mie: pd.DataFrame, mese: str) -> None:
+    """Griglia lun-dom del mese: in lime i giorni con ore registrate, per vedere subito quelli dimenticati."""
+    a, m = map(int, mese.split("-"))
+    ore = ore_numeriche(mie).groupby("data")["ore"].sum()
+    celle = [f'<div class="smc-cal-h">{g}</div>' for g in ("lun", "mar", "mer", "gio", "ven", "sab", "dom")]
+    for settimana in calendar.Calendar().monthdatescalendar(a, m):
+        for g in settimana:
+            if g.month != m:
+                celle.append('<div class="smc-cal-d fuori"></div>')
+                continue
+            h = float(ore.get(g.isoformat(), 0.0))
+            classi = " ".join(["smc-cal-d"] + ["piena"] * bool(h) + ["weekend"] * (g.weekday() >= 5)
+                              + ["oggi"] * (g == date.today()))
+            celle.append(f'<div class="{classi}"><span>{g.day}</span><b>{ore_fmt(h) + " h" if h else ""}</b></div>')
+    giorni = int((ore > 0).sum())
+    st.markdown(etichetta_sezione(f"Giorni del mese · {giorni} con ore registrate")
+                + f'<div class="smc-cal">{"".join(celle)}</div>', unsafe_allow_html=True)
+
 
 def vista_commesse(utente: dict, persone, commesse, reg) -> None:
+    if not utente["admin"] and not st.session_state.get("atterrato"):
+        # appena entrato, il collaboratore va dritto alla commessa del mese in corso, se c'è
+        st.session_state["atterrato"] = True
+        corrente = commessa_di(utente["nome"], mese_corrente(), commesse)
+        if corrente is not None:
+            st.session_state["commessa"] = corrente["id"]
     sel = st.session_state.get("commessa")
     comm = commesse[commesse["id"] == sel]
     if sel and len(comm) and (utente["admin"] or comm.iloc[0]["persona"] == utente["nome"]):
@@ -309,11 +447,35 @@ def grafico_plafond(riep: pd.DataFrame) -> go.Figure:
     return fig
 
 
+COLONNE_RIEPILOGO = {"persona": "Persona", "ore": "Ore", "plafond": "Plafond", "residuo": "Residuo", "stato": "Stato"}
+COLONNE_DETTAGLIO = {"persona": "Persona", "data": "Giorno", "attivita": "Attività", "ore": "Ore", "note": "Note",
+                     "inserita_il": "Inserita il"}
+
+
+def tabella_riepilogo(riep: pd.DataFrame) -> str:
+    """Riepilogo come tabella HTML, per avere lo stato a pillola come nell'elenco commesse."""
+    def cella(v, rossa=False):
+        return f'<td class="num{" neg" if rossa else ""}">{ore_fmt(v)}</td>'
+
+    righe = "".join(
+        f"<tr><td>{escape(r.persona)}</td>{cella(r.ore)}{cella(r.plafond)}"
+        f"{cella(r.residuo, pd.notna(r.residuo) and r.residuo < 0)}<td>{chip(r.stato)}</td></tr>"
+        for r in riep.itertuples())
+    testa = "".join(f'<th class="{"num" if c in ("ore", "plafond", "residuo") else ""}">{t}</th>'
+                    for c, t in COLONNE_RIEPILOGO.items())
+    return f'<table class="smc-table"><thead><tr>{testa}</tr></thead><tbody>{righe}</tbody></table>'
+
+
 def excel_mese(riep, dettaglio) -> bytes:
+    dett = dettaglio.assign(data=come_date(dettaglio["data"]),
+                            inserita_il=pd.to_datetime(dettaglio["inserita_il"], errors="coerce"))
     buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as xw:
-        riep.to_excel(xw, sheet_name="Commesse", index=False)
-        dettaglio.to_excel(xw, sheet_name="Dettaglio", index=False)
+    with pd.ExcelWriter(buf, engine="openpyxl", date_format="DD/MM/YYYY", datetime_format="DD/MM/YYYY HH:MM") as xw:
+        riep.rename(columns=COLONNE_RIEPILOGO).to_excel(xw, sheet_name="Commesse", index=False)
+        dett.rename(columns=COLONNE_DETTAGLIO).to_excel(xw, sheet_name="Dettaglio", index=False)
+        for foglio, larghezze in (("Commesse", [22, 10, 10, 10, 22]), ("Dettaglio", [22, 12, 50, 8, 30, 18])):
+            for i, w in enumerate(larghezze):
+                xw.sheets[foglio].column_dimensions[chr(65 + i)].width = w
     return buf.getvalue()
 
 
@@ -336,17 +498,18 @@ def vista_riepilogo(utente: dict, persone, commesse, reg) -> None:
 
     if riep["ore"].sum() > 0:
         st.plotly_chart(grafico_plafond(riep), width="stretch", theme=None)
-    vista = riep.copy()
-    for col in ("ore", "plafond", "residuo"):
-        vista[col] = vista[col].map(ore_fmt)
-    st.dataframe(vista.style.apply(
-        lambda r: [f"color: {ROSSO}; font-weight: 600" if r["stato"] == "oltre plafond" else ""] * len(r), axis=1),
-        hide_index=True, width="stretch")
+    st.markdown(tabella_riepilogo(riep), unsafe_allow_html=True)
 
     dettaglio = ore_numeriche(reg[reg["mese"] == mese]).sort_values(["persona", "data", "inserita_il"])
     dettaglio = dettaglio[["persona", "data", "attivita", "ore", "note", "inserita_il"]]
     with st.expander(f"Dettaglio registrazioni ({len(dettaglio)})"):
-        st.dataframe(dettaglio, hide_index=True, width="stretch")
+        st.dataframe(dettaglio.assign(data=come_date(dettaglio["data"]),
+                                      inserita_il=dettaglio["inserita_il"].map(data_it)),
+                     hide_index=True, width="stretch",
+                     column_config={"persona": "Persona", "attivita": "Attività", "note": "Note",
+                                    "inserita_il": "Inserita il",
+                                    "data": st.column_config.DateColumn("Giorno", format="DD/MM/YYYY"),
+                                    "ore": st.column_config.NumberColumn("Ore", format="localized")})
     st.download_button("Scarica Excel del mese", excel_mese(riep, dettaglio),
                        file_name=f"timesheet_smace_{mese}.xlsx", type="primary",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -372,19 +535,24 @@ def vista_impostazioni(persone, commesse) -> None:
 
     st.markdown(etichetta_sezione("Commesse"), unsafe_allow_html=True)
     st.caption("Qui si corregge il plafond di una commessa già aperta.")
-    tab = commesse.sort_values(["mese", "persona"], ascending=[False, True])
-    ed_c = st.data_editor(tab, hide_index=True, width="stretch", key="ed_commesse",
+    tab = commesse.sort_values(["mese", "persona"], ascending=[False, True]).assign(
+        mese=lambda d: d["mese"].map(etichetta_mese), plafond=lambda d: d["plafond"].map(num),
+        aperta_il=lambda d: d["aperta_il"].map(data_it))
+    ed_c = st.data_editor(tab, hide_index=True, width="stretch", key=f"ed_commesse_{st.session_state.get('versione', 0)}",
                           disabled=["id", "persona", "mese", "aperta_il", "aperta_da"],
-                          column_config={"id": None, "persona": "Persona", "mese": "Mese", "plafond": "Plafond (ore)",
+                          column_config={"id": None, "persona": "Persona", "mese": "Mese",
+                                         "plafond": st.column_config.NumberColumn("Plafond (ore)", min_value=0.0,
+                                                                                  step=1.0, format="localized"),
                                          "aperta_il": "Aperta il", "aperta_da": "Aperta da"})
     if st.button("Salva plafond delle commesse"):
-        if any(str(v).strip() and num(v) is None for v in ed_c["plafond"]):
-            st.error("Plafond non numerico su qualche riga.")
-        else:
-            nuovi = dict(zip(ed_c["id"], ed_c["plafond"]))
+        # si riscrivono solo i plafond cambiati, gli altri restano com'erano nel CSV
+        prima = dict(zip(tab["id"], tab["plafond"]))
+        nuovi = {i: "" if pd.isna(v) else str(float(v)) for i, v in zip(ed_c["id"], ed_c["plafond"])
+                 if not (pd.isna(v) and pd.isna(prima[i])) and v != prima[i]}
+        if nuovi:
             scrivi("commesse", lambda df: df.assign(plafond=df["id"].map(nuovi).fillna(df["plafond"])),
                    "Impostazioni: plafond commesse")
-            st.rerun()
+        st.rerun()
 
 
 # ------------------------------------------------------------------ main
