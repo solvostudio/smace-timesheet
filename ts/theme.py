@@ -83,7 +83,8 @@ def etichetta_sezione(testo: str) -> str:
 
 def chip(testo: str) -> str:
     """Stato di una commessa come pillola colorata, come gli stati delle card del Knowledge Hub."""
-    classe = {"nei limiti": "ok", "vicino al plafond": "warn", "oltre plafond": "ko"}.get(testo, "neutro")
+    classe = {"nei limiti": "ok", "vicino al plafond": "warn", "oltre plafond": "ko",
+              "da approvare": "warn", "rimborsata": "ok", "respinta": "ko"}.get(testo, "neutro")
     return f'<span class="smc-chip smc-chip-{classe}">{escape(testo)}</span>'
 
 
@@ -174,6 +175,12 @@ h4 {{ font-size: 1.1rem; }}
 .smc-table tr:last-child td {{ border-bottom: none; }}
 .smc-table .num {{ text-align: right; font-variant-numeric: tabular-nums; }}
 .smc-table td.neg {{ color: var(--rosso); font-weight: 600; }}
+
+/* suggerimento "Press Enter to submit form" dei campi nei form: piccolo e su una riga, sotto il valore */
+[data-testid="InputInstructions"] {{
+  font-size: 0.62rem !important; white-space: nowrap; opacity: .75;
+  top: auto !important; bottom: 1px !important; line-height: 1;
+}}
 
 /* Calendario dei giorni del mese */
 .smc-cal {{ display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-bottom: 14px; }}

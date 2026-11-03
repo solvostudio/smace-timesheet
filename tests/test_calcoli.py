@@ -41,3 +41,18 @@ def test_archivio_locale(tmp_path):
     a.modifica("registrazioni", lambda df: pd.concat([df, pd.DataFrame([{"id": "x", "ore": "2"}])]), "t")
     df = a.leggi("registrazioni")
     assert list(df["id"]) == ["x"] and df.loc[0, "persona"] == ""
+
+
+def test_forfait_e_spese():
+    commesse = pd.concat([COMMESSE, pd.DataFrame([{"id": "f10", "persona": "Admin", "mese": "2026-11",
+                                                   "plafond": "", "tipo": "forfait"}])], ignore_index=True)
+    spese = pd.DataFrame([
+        {"persona": "Mario", "mese": "2026-11", "importo": "12.50", "stato": "da approvare"},
+        {"persona": "Mario", "mese": "2026-11", "importo": "30", "stato": "rimborsata"},
+        {"persona": "Mario", "mese": "2026-11", "importo": "99", "stato": "respinta"},
+        {"persona": "Mario", "mese": "2026-10", "importo": "5", "stato": "approvata"},
+    ])
+    r = riepilogo_mese("2026-11", REG, PERSONE, commesse, spese).set_index("persona")
+    assert r.loc["Admin", "stato"] == "forfait" and pd.isna(r.loc["Admin", "plafond"])
+    assert r.loc["Mario", "spese"] == 42.5  # la respinta e il mese prima non contano
+    assert r.loc["Admin", "spese"] == 0

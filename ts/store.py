@@ -17,8 +17,11 @@ import requests
 
 TABELLE = {
     "persone": ["nome", "ruolo", "attiva"],
-    "commesse": ["id", "persona", "mese", "plafond", "aperta_il", "aperta_da"],
+    # tipo: "ore" (con plafond) o "forfait"; vuoto nelle commesse aperte prima = "ore"
+    "commesse": ["id", "persona", "mese", "plafond", "aperta_il", "aperta_da", "tipo"],
     "registrazioni": ["id", "commessa", "persona", "mese", "data", "attivita", "ore", "note", "inserita_il"],
+    "spese": ["id", "commessa", "persona", "mese", "data", "categoria", "descrizione", "riferimento", "importo",
+              "stato", "inserita_il", "approvata_il", "approvata_da", "rimborsata_il"],
 }
 
 

@@ -6,11 +6,13 @@ Istruzioni per Claude quando lavora su questo repo, di solito su richiesta dell'
 
 App Streamlit per la rendicontazione oraria di chi lavora su SMACE non a tempo pieno. Ogni collaboratore apre a inizio mese la sua **commessa** (persona + mese + plafond di ore del suo contratto) e dentro registra giorno, attività (testo libero) e ore. Il plafond avvisa ma non blocca: lo sforamento si conferma fuori dallo strumento, come l'approvazione della fattura di fine mese. L'admin vede tutto e gestisce le persone.
 
+Una commessa può essere anche **a forfait** (colonna `tipo`): niente plafond, le ore sono facoltative. Dentro la commessa il collaboratore inserisce le **spese da rimborsare** (senza allegati, solo un riferimento al giustificativo); l'admin le approva o respinge e le segna come rimborsate dalla vista Spese. Nel tool non ci sono compensi, solo spese.
+
 ## Struttura
 
 - `app.py`: interfaccia (accesso, Commesse, Riepilogo con export Excel, Impostazioni solo admin).
 - `ts/calcoli.py`: ore, plafond, stati. Funzioni pure, coperte da `tests/`.
-- `ts/store.py`: lettura e scrittura delle tabelle CSV (`persone`, `commesse`, `registrazioni`). In locale scrive in `data/`, che contiene solo dati di esempio; online scrive sul ramo `dati` del repo **privato** `solvostudio/smace-timesheet-dati` tramite API GitHub.
+- `ts/store.py`: lettura e scrittura delle tabelle CSV (`persone`, `commesse`, `registrazioni`, `spese`). In locale scrive in `data/`, che contiene solo dati di esempio; online scrive sul ramo `dati` del repo **privato** `solvostudio/smace-timesheet-dati` tramite API GitHub.
 - `ts/theme.py`: palette e stile SMACE, condivisi con il Financial Plan.
 
 ## Regole
