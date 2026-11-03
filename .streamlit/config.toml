@@ -1,10 +1,24 @@
 [theme]
+# allineato al Knowledge Hub SMACE (smace-knowledge-hub.netlify.app)
 base = "light"
 primaryColor = "#1A3C34"
 backgroundColor = "#F5F2ED"
-secondaryBackgroundColor = "#E8EDE4"
-textColor = "#1A1A1E"
-font = "sans serif"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1A2420"
+linkColor = "#4A7C6F"
+borderColor = "#DDD8CC"
+showWidgetBorder = true
+baseRadius = "12px"
+buttonRadius = "full"
+font = "'DM Sans':https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap"
+headingFont = "'Playfair Display':https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,500;1,600&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap"
+
+[theme.sidebar]
+backgroundColor = "#1A3C34"
+secondaryBackgroundColor = "#234D43"
+textColor = "#F5F2ED"
+borderColor = "#234D43"
 
 [server]
 headless = true

@@ -15,6 +15,7 @@ import hmac
 import io
 import uuid
 from datetime import date, datetime
+from html import escape
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -24,12 +25,12 @@ import streamlit as st
 
 from ts.calcoli import num, ore_numeriche, riepilogo_mese, stato
 from ts.store import ArchivioGitHub, ArchivioLocale
-from ts.theme import CSS, DEEP_FOREST, SAGE_GREEN, register_plotly_template
+from ts.theme import (CSS, CSS_ACCESSO, CREAM, DEEP_FOREST, PLOTLY_TEMPLATE_NAME, ROSSO, SAGE_GREEN, chip,
+                      etichetta_sezione, intestazione, logo, register_plotly_template)
 
 DATI = Path(__file__).parent / "data"
 MESI_IT = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
            "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"]
-ROSSO = "#B3412E"
 
 
 # ------------------------------------------------------------------ archivio
@@ -102,7 +103,16 @@ def accesso(persone: pd.DataFrame) -> dict | None:
         return st.session_state["utente"]
     attive = persone[persone["attiva"] != "no"]
     utenti = _segreti("utenti")
-    st.markdown("# SMACE · Timesheet")
+    st.markdown(CSS_ACCESSO, unsafe_allow_html=True)
+    st.markdown(logo(etichetta="Timesheet collaboratori"), unsafe_allow_html=True)
+    st.markdown('<div class="smc-login"><h1>Il timesheet di <em>SMACE</em></h1>'
+                "<p>Le tue ore del mese, commessa per commessa.</p></div>", unsafe_allow_html=True)
+    _, centro, _ = st.columns([1, 2, 1])
+    with centro:
+        return _form_accesso(attive, utenti)
+
+
+def _form_accesso(attive: pd.DataFrame, utenti) -> dict | None:
     if utenti is None:
         nome = st.selectbox("Chi sei", list(attive["nome"]), index=None, placeholder="Scegli il tuo nome")
         st.caption("Modalità locale: nessuna password richiesta.")
@@ -156,7 +166,9 @@ def torna_all_elenco() -> None:
 
 
 def elenco_commesse(utente: dict, persone, commesse, reg) -> None:
-    st.markdown("## Commesse")
+    st.markdown(intestazione("Timesheet · Commesse", "Commesse",
+                             "Una commessa per persona e per mese, con il plafond di ore del contratto."),
+                unsafe_allow_html=True)
     c1, c2 = st.columns([3, 1])
     if utente["admin"]:
         scelta = c1.selectbox("Persona", ["Tutte"] + list(persone["nome"]))
@@ -172,14 +184,15 @@ def elenco_commesse(utente: dict, persone, commesse, reg) -> None:
         st.caption("Nessuna commessa. A inizio mese si apre quella del mese con \"Nuova commessa\".")
         return
     ore = ore_numeriche(reg).groupby("commessa")["ore"].sum()
+    st.markdown(etichetta_sezione("Dalla più recente"), unsafe_allow_html=True)
     for _, c in viste.sort_values(["mese", "persona"], ascending=[False, True]).iterrows():
         o, pl = float(ore.get(c["id"], 0.0)), num(c["plafond"])
         with st.container(border=True):
             a, b, d, e = st.columns([3, 2, 2, 1], vertical_alignment="center")
-            a.markdown(f"**{c['persona']} · {etichetta_mese(c['mese'])}**  \n{periodo(c['mese'])}")
+            a.markdown(f'<div class="smc-card-title">{escape(c["persona"])} · {etichetta_mese(c["mese"])}</div>'
+                       f'<div class="smc-card-sub">{periodo(c["mese"])}</div>', unsafe_allow_html=True)
             b.markdown(f"{ore_fmt(o)} / {ore_fmt(pl)} ore")
-            st_pl = stato(o, pl)
-            d.markdown(f":red[{st_pl}]" if st_pl == "oltre plafond" else st_pl)
+            d.markdown(chip(stato(o, pl)), unsafe_allow_html=True)
             if e.button("Apri", key=f"apri_{c['id']}", width="stretch"):
                 st.session_state["commessa"] = c["id"]
                 st.rerun()
@@ -187,7 +200,7 @@ def elenco_commesse(utente: dict, persone, commesse, reg) -> None:
 
 def nuova_commessa(utente: dict, persone, commesse) -> None:
     torna_all_elenco()
-    st.markdown("## Nuova commessa")
+    st.markdown(intestazione("Timesheet · Commesse", "Nuova commessa"), unsafe_allow_html=True)
     if utente["admin"]:
         attive = list(persone.loc[persone["attiva"] != "no", "nome"])
         persona = st.selectbox("Persona", attive, index=attive.index(utente["nome"]) if utente["nome"] in attive else 0)
@@ -223,15 +236,15 @@ def modifica_plafond(comm: pd.Series) -> None:
 def dettaglio_commessa(comm: pd.Series, reg) -> None:
     torna_all_elenco()
     persona, mese = comm["persona"], comm["mese"]
-    st.markdown(f"## Commessa {persona} · {etichetta_mese(mese)}")
-    st.caption(f"{periodo(mese)} · aperta il {comm['aperta_il']} da {comm['aperta_da']}")
+    st.markdown(intestazione(f"Commessa · {periodo(mese)}", f"{persona} · {etichetta_mese(mese)}",
+                             f"Aperta il {comm['aperta_il']} da {comm['aperta_da']}"), unsafe_allow_html=True)
     mie = reg[reg["commessa"] == comm["id"]]
     barra_plafond(float(ore_numeriche(mie)["ore"].sum()), num(comm["plafond"]))
     modifica_plafond(comm)
 
     primo, ultimo = limiti_mese(mese)
     with st.form("nuove_ore", clear_on_submit=True):
-        st.markdown("#### Registra ore")
+        st.markdown(etichetta_sezione("Registra ore"), unsafe_allow_html=True)
         c1, c2, c3 = st.columns([1, 3, 1])
         giorno = c1.date_input("Giorno", value=min(max(date.today(), primo), ultimo),
                                min_value=primo, max_value=ultimo, format="DD/MM/YYYY")
@@ -255,6 +268,7 @@ def dettaglio_commessa(comm: pd.Series, reg) -> None:
     if mie.empty:
         st.caption("Nessuna ora registrata in questa commessa.")
         return
+    st.markdown(etichetta_sezione("Ore registrate"), unsafe_allow_html=True)
     tab = mie[["id", "data", "attivita", "ore", "note"]].sort_values("data").copy()
     tab["ore"] = tab["ore"].map(num)
     tab.insert(0, "elimina", False)
@@ -289,8 +303,9 @@ def grafico_plafond(riep: pd.DataFrame) -> go.Figure:
     fig.add_bar(x=riep["persona"], y=riep["ore"], name="Ore", marker_color=colori)
     con_pl = riep.dropna(subset=["plafond"])
     fig.add_scatter(x=con_pl["persona"], y=con_pl["plafond"], name="Plafond", mode="markers",
-                    marker=dict(symbol="line-ew-open", size=40, line=dict(width=3, color=SAGE_GREEN)))
-    fig.update_layout(title="Ore contro plafond", height=360, showlegend=True)
+                    marker=dict(symbol="line-ew-open", size=40, color=SAGE_GREEN, line=dict(width=3, color=SAGE_GREEN)))
+    fig.update_layout(title="Ore contro plafond", height=360, showlegend=True, template=PLOTLY_TEMPLATE_NAME,
+                      title_x=0.01, paper_bgcolor="#fff", plot_bgcolor="#fff")
     return fig
 
 
@@ -303,7 +318,9 @@ def excel_mese(riep, dettaglio) -> bytes:
 
 
 def vista_riepilogo(utente: dict, persone, commesse, reg) -> None:
-    st.markdown("## Riepilogo")
+    st.markdown(intestazione("Timesheet · Riepilogo", "Riepilogo del mese",
+                             "Ore, plafond e residuo di ciascuno, con l'export Excel per la chiusura."),
+                unsafe_allow_html=True)
     mesi = elenco_mesi(commesse)
     mese = st.selectbox("Mese", mesi, index=mesi.index(mese_corrente()), format_func=etichetta_mese, key="mese_riep")
     if not utente["admin"]:
@@ -318,7 +335,7 @@ def vista_riepilogo(utente: dict, persone, commesse, reg) -> None:
     c3.metric("Oltre plafond", int((riep["stato"] == "oltre plafond").sum()))
 
     if riep["ore"].sum() > 0:
-        st.plotly_chart(grafico_plafond(riep), width="stretch")
+        st.plotly_chart(grafico_plafond(riep), width="stretch", theme=None)
     vista = riep.copy()
     for col in ("ore", "plafond", "residuo"):
         vista[col] = vista[col].map(ore_fmt)
@@ -337,10 +354,11 @@ def vista_riepilogo(utente: dict, persone, commesse, reg) -> None:
 
 # ------------------------------------------------------------------ impostazioni
 def vista_impostazioni(persone, commesse) -> None:
-    st.markdown("## Impostazioni")
-    st.caption("Le password non stanno qui: si impostano nei secrets dell'app, una per persona.")
+    st.markdown(intestazione("Timesheet · Admin", "Impostazioni",
+                             "Le password non stanno qui: si impostano nei secrets dell'app, una per persona."),
+                unsafe_allow_html=True)
 
-    st.markdown("### Persone")
+    st.markdown(etichetta_sezione("Persone"), unsafe_allow_html=True)
     ed_p = st.data_editor(persone, num_rows="dynamic", hide_index=True, width="stretch", key="ed_persone",
                           column_config={"nome": "Nome",
                                          "ruolo": st.column_config.SelectboxColumn("Ruolo", options=["collaboratore", "admin"], required=True),
@@ -352,7 +370,7 @@ def vista_impostazioni(persone, commesse) -> None:
             scrivi("persone", lambda _: ed_p, "Impostazioni: persone")
             st.rerun()
 
-    st.markdown("### Commesse")
+    st.markdown(etichetta_sezione("Commesse"), unsafe_allow_html=True)
     st.caption("Qui si corregge il plafond di una commessa già aperta.")
     tab = commesse.sort_values(["mese", "persona"], ascending=[False, True])
     ed_c = st.data_editor(tab, hide_index=True, width="stretch", key="ed_commesse",
@@ -385,8 +403,8 @@ def main():
         st.stop()
     commesse, reg = leggi("commesse"), leggi("registrazioni")
 
-    st.sidebar.markdown("# SMACE")
-    st.sidebar.markdown("### Timesheet")
+    st.sidebar.markdown(logo(CREAM, 130), unsafe_allow_html=True)
+    st.sidebar.markdown(etichetta_sezione("Timesheet"), unsafe_allow_html=True)
     st.sidebar.caption(f"{utente['nome']}{' · admin' if utente['admin'] else ''}")
     viste = ["Commesse", "Riepilogo"] + (["Impostazioni"] if utente["admin"] else [])
     vista = st.sidebar.radio("Vista", viste, label_visibility="collapsed")
