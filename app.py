@@ -117,6 +117,42 @@ def ore_fmt(v) -> str:
     return f"{v:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".").removesuffix(",0")
 
 
+def ore_hm(v) -> str:
+    """Ore in ore e minuti: 1.5 → '1 h 30', 2 → '2 h', 0.5 → '30 min', -1.5 → '−1 h 30'."""
+    if v is None or pd.isna(v):
+        return "—"
+    segno, minuti = ("−" if v < 0 else ""), round(abs(v) * 60)
+    h, m = divmod(minuti, 60)
+    if not h:
+        return f"{segno}{m} min" if m else "0 h"
+    return f"{segno}{h} h" + (f" {m:02d}" if m else "")
+
+
+def ora_tendina(v: float) -> str:
+    """Voce della tendina delle ore: 1.5 → '1:30', 0 → 'nessuna' (a forfait)."""
+    if not v:
+        return "nessuna"
+    h, m = divmod(round(v * 60), 60)
+    return f"{h}:{m:02d}"
+
+
+def ore_da_tendina(voce) -> float | None:
+    """Inverso di ora_tendina: '1:30' → 1.5, 'nessuna' → 0."""
+    voce = str(voce or "").strip()
+    if voce == "nessuna":
+        return 0.0
+    try:
+        h, m = voce.split(":")
+        return int(h) + int(m) / 60
+    except ValueError:
+        return None
+
+
+def opzioni_ore(minime: float) -> list[float]:
+    """Mezz'ore da 0:30 a 24:00; a forfait anche 0, cioè attività senza ore."""
+    return ([0.0] if minime == 0 else []) + [i / 2 for i in range(1, 49)]
+
+
 def euro_fmt(v) -> str:
     """1234.5 → '1.234,50 €'."""
     return f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " €"
@@ -178,19 +214,19 @@ def _form_accesso(attive: pd.DataFrame, utenti) -> dict | None:
 # ------------------------------------------------------------------ commessa
 def barra_plafond(ore: float, plafond: float | None, tipo: str = "ore") -> None:
     c1, c2, c3 = st.columns(3)
-    c1.metric("Ore registrate", ore_fmt(ore))
+    c1.metric("Ore registrate", ore_hm(ore))
     if tipo == "forfait":
         c2.metric("Contratto", "Forfait")
         c3.metric("Plafond", "—")
         return
-    c2.metric("Plafond", ore_fmt(plafond) if plafond is not None else "da definire")
+    c2.metric("Plafond", ore_hm(plafond) if plafond is not None else "da definire")
     if plafond is None:
         c3.metric("Residuo", "—")
         return
-    c3.metric("Residuo", ore_fmt(plafond - ore))
+    c3.metric("Residuo", ore_hm(plafond - ore))
     st.progress(min(ore / plafond, 1.0) if plafond else 1.0)
     if ore > plafond:
-        st.warning(f"Plafond superato di {ore_fmt(ore - plafond)} ore. Le ore restano registrate: "
+        st.warning(f"Plafond superato di {ore_hm(ore - plafond)}. Le ore restano registrate: "
                    "il superamento va confermato fuori da questo strumento.")
 
 
@@ -251,7 +287,7 @@ def elenco_commesse(utente: dict, persone, commesse, reg) -> None:
             a, b, d, e = st.columns([3, 2, 2, 1], vertical_alignment="center")
             a.markdown(f'<div class="smc-card-title">{escape(c["persona"])} · {etichetta_mese(c["mese"])}</div>'
                        f'<div class="smc-card-sub">{periodo(c["mese"])}</div>', unsafe_allow_html=True)
-            b.markdown(f"{ore_fmt(o)} ore" if tipo == "forfait" else f"{ore_fmt(o)} / {ore_fmt(pl)} ore")
+            b.markdown(ore_hm(o) if tipo == "forfait" else f"{ore_hm(o)} / {ore_hm(pl)}")
             d.markdown(chip(stato(o, pl, tipo)), unsafe_allow_html=True)
             if e.button("Apri", key=f"apri_{c['id']}", width="stretch"):
                 st.session_state["commessa"] = c["id"]
@@ -346,8 +382,9 @@ def registra_ore(comm: pd.Series, reg: pd.DataFrame) -> None:
                                min_value=primo, max_value=ultimo, format="DD/MM/YYYY")
         att = c2.selectbox("Attività", attivita_recenti(persona, reg), index=None, accept_new_options=True,
                            placeholder="Scrivi l'attività o scegline una già usata")
-        ore = c3.number_input("Ore" + (" (facoltative)" if minime == 0 else ""), min_value=minime, max_value=24.0,
-                              value=0.0 if minime == 0 else 1.0, step=0.5)
+        scelte = opzioni_ore(minime)
+        ore = c3.selectbox("Ore" + (" (facoltative)" if minime == 0 else ""), scelte, format_func=ora_tendina,
+                           index=scelte.index(0.0 if minime == 0 else 1.0))
         note = st.text_input("Note (facoltative)")
         if st.form_submit_button("Registra", type="primary"):
             if not (att or "").strip():
@@ -359,8 +396,7 @@ def registra_ore(comm: pd.Series, reg: pd.DataFrame) -> None:
                 "note": note.strip(), "inserita_il": adesso()},
                 f"{persona}: {ore_fmt(ore)} h il {giorno.isoformat()}")
             st.session_state["esito"] = (f"Registrata l'attività del {giorno.strftime('%d/%m')}." if not ore else
-                                         f"{'Registrata' if ore == 1 else 'Registrate'} "
-                                         f"{quante(ore, 'ora', 'ore')} il {giorno.strftime('%d/%m')}.")
+                                         f"Registrate {ore_hm(ore)} il {giorno.strftime('%d/%m')}.")
             st.rerun()
 
 
@@ -372,6 +408,8 @@ def ore_registrate(comm: pd.Series, mie: pd.DataFrame) -> None:
     st.markdown(etichetta_sezione("Attività registrate"), unsafe_allow_html=True)
     st.caption("Per correggere una riga modificala direttamente nella tabella e premi \"Salva modifiche\".")
     tab = tabella_registrazioni(mie)
+    # le voci della tendina più eventuali valori vecchi fuori dalle mezz'ore, perché restino visibili
+    voci = list(dict.fromkeys([ora_tendina(v) for v in opzioni_ore(ore_minime(comm))] + list(tab["ore"])))
     ed = st.data_editor(tab, hide_index=True, width="stretch", disabled=["id"],
                         column_config={
                             "id": None,
@@ -379,8 +417,7 @@ def ore_registrate(comm: pd.Series, mie: pd.DataFrame) -> None:
                             "data": st.column_config.DateColumn("Giorno", format="DD/MM/YYYY", required=True,
                                                                 min_value=primo, max_value=ultimo),
                             "attivita": st.column_config.TextColumn("Attività", required=True, width="large"),
-                            "ore": st.column_config.NumberColumn("Ore", min_value=ore_minime(comm), max_value=24.0,
-                                                                 step=0.5, format="localized", required=True),
+                            "ore": st.column_config.SelectboxColumn("Ore", options=voci, required=True),
                             "note": st.column_config.TextColumn("Note")},
                         key=f"ed_{comm['id']}_{st.session_state.get('versione', 0)}")
     salva_modifiche(comm, tab, ed)
@@ -396,7 +433,7 @@ def attivita_recenti(persona: str, reg: pd.DataFrame, quante: int = 30) -> list[
 def tabella_registrazioni(mie: pd.DataFrame) -> pd.DataFrame:
     tab = mie[["id", "data", "attivita", "ore", "note"]].sort_values(["data"]).copy()
     tab["data"] = come_date(tab["data"])
-    tab["ore"] = tab["ore"].map(num)
+    tab["ore"] = tab["ore"].map(lambda v: ora_tendina(num(v) or 0.0))
     tab.insert(0, "elimina", False)
     return tab.reset_index(drop=True)
 
@@ -418,14 +455,15 @@ def salva_modifiche(comm: pd.Series, prima: pd.DataFrame, dopo: pd.DataFrame) ->
     primo, ultimo = limiti_mese(comm["mese"])
     minime = ore_minime(comm)
     errori = [r for _, r in mod.iterrows()
-              if not str(r["attivita"] or "").strip() or num(r["ore"]) is None or not minime <= num(r["ore"]) <= 24
+              if not str(r["attivita"] or "").strip() or ore_da_tendina(r["ore"]) is None
+              or not minime <= ore_da_tendina(r["ore"]) <= 24
               or pd.isna(r["data"]) or not primo <= r["data"] <= ultimo]
     if errori:
         st.error(f"Controlla le righe modificate: servono giorno del mese, attività e ore "
-                 f"(tra {ore_fmt(minime)} e 24).")
+                 f"(tra {ora_tendina(minime)} e 24:00).")
         return
     if st.button(f"Salva modifiche ({quante(len(mod), 'riga', 'righe')})", type="primary"):
-        nuovi = {r["id"]: [r["data"].isoformat(), str(r["attivita"]).strip(), str(float(r["ore"])),
+        nuovi = {r["id"]: [r["data"].isoformat(), str(r["attivita"]).strip(), str(ore_da_tendina(r["ore"])),
                            str(r["note"] or "").strip()] for _, r in mod.iterrows()}
 
         def applica(df: pd.DataFrame) -> pd.DataFrame:
@@ -451,7 +489,7 @@ def conferma_eliminazione(comm: pd.Series, mie: pd.DataFrame, ed: pd.DataFrame) 
         return
     ore = ore_numeriche(mie[mie["id"].isin(da_togliere)])["ore"].sum()
     st.warning(f"Stai per eliminare {quante(len(da_togliere), 'registrazione', 'registrazioni')} "
-               f"({quante(ore, 'ora', 'ore')}). "
+               f"({ore_hm(ore)}). "
                "L'operazione non si può annullare.")
     c1, c2, _ = st.columns([1, 1, 3])
     if c1.button("Sì, elimina", type="primary", width="stretch"):
@@ -480,7 +518,7 @@ def calendario_mese(mie: pd.DataFrame, mese: str) -> None:
             h = ore.get(g.isoformat())
             classi = " ".join(["smc-cal-d"] + ["piena"] * (h is not None) + ["weekend"] * (g.weekday() >= 5)
                               + ["oggi"] * (g == date.today()))
-            celle.append(f'<div class="{classi}"><span>{g.day}</span><b>{ore_fmt(h) + " h" if h else ""}</b></div>')
+            celle.append(f'<div class="{classi}"><span>{g.day}</span><b>{ore_hm(h) if h else ""}</b></div>')
     giorni = len(ore)
     st.markdown(etichetta_sezione(f"Giorni del mese · {giorni} con attività registrate")
                 + f'<div class="smc-cal">{"".join(celle)}</div>', unsafe_allow_html=True)
@@ -728,7 +766,7 @@ COLONNE_SPESE = {"persona": "Persona", "data": "Giorno", "categoria": "Categoria
 def tabella_riepilogo(riep: pd.DataFrame) -> str:
     """Riepilogo come tabella HTML, per avere lo stato a pillola come nell'elenco commesse."""
     def cella(v, rossa=False):
-        return f'<td class="num{" neg" if rossa else ""}">{ore_fmt(v)}</td>'
+        return f'<td class="num{" neg" if rossa else ""}">{ore_hm(v)}</td>'
 
     righe = "".join(
         f"<tr><td>{escape(r.persona)}</td>{cella(r.ore)}{cella(r.plafond)}"
@@ -775,7 +813,7 @@ def vista_riepilogo(utente: dict, persone, commesse, reg, spese) -> None:
     spese_mese = spese[spese["mese"] == mese]
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Ore totali", ore_fmt(riep["ore"].sum()))
+    c1.metric("Ore totali", ore_hm(riep["ore"].sum()))
     c2.metric("Commesse aperte", int((riep["stato"] != "commessa non aperta").sum()))
     c3.metric("Oltre plafond", int((riep["stato"] == "oltre plafond").sum()))
     c4.metric("Spese del mese", euro_fmt(riep["spese"].sum()))
@@ -788,12 +826,12 @@ def vista_riepilogo(utente: dict, persone, commesse, reg, spese) -> None:
     dettaglio = dettaglio[["persona", "data", "attivita", "ore", "note", "inserita_il"]]
     with st.expander(f"Dettaglio registrazioni ({len(dettaglio)})"):
         st.dataframe(dettaglio.assign(data=come_date(dettaglio["data"]),
-                                      inserita_il=dettaglio["inserita_il"].map(data_it)),
+                                      inserita_il=dettaglio["inserita_il"].map(data_it),
+                                      ore=dettaglio["ore"].map(lambda v: ore_hm(v) if v else "—")),
                      hide_index=True, width="stretch",
                      column_config={"persona": "Persona", "attivita": "Attività", "note": "Note",
-                                    "inserita_il": "Inserita il",
-                                    "data": st.column_config.DateColumn("Giorno", format="DD/MM/YYYY"),
-                                    "ore": st.column_config.NumberColumn("Ore", format="localized")})
+                                    "inserita_il": "Inserita il", "ore": "Ore",
+                                    "data": st.column_config.DateColumn("Giorno", format="DD/MM/YYYY")})
     if not spese_mese.empty:
         with st.expander(f"Spese del mese ({len(spese_mese)})"):
             st.markdown(tabella_spese(spese_mese, con_persona=True), unsafe_allow_html=True)
