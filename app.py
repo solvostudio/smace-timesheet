@@ -589,17 +589,20 @@ def vista_spese(utente: dict, spese: pd.DataFrame) -> None:
 def gestione_stati(spese: pd.DataFrame, utente: dict) -> None:
     st.caption("Per approvare, respingere o segnare come rimborsata una spesa: doppio clic sulla sua cella "
                "\"Stato\", scegli il nuovo stato e premi \"Salva stato\". Per rimborsare in un colpo tutte le "
-               "spese approvate di una persona usa il pulsante in fondo alla pagina.")
+               "spese approvate di una persona usa il pulsante in fondo alla pagina. Una spesa inserita per "
+               "errore si cancella con la spunta \"Elimina\".")
     tab = importi(spese).sort_values(["data", "persona"]).assign(
         data=lambda d: come_date(d["data"]), rimborsata_il=lambda d: come_date(d["rimborsata_il"]),
         importo=lambda d: d["importo"].map(euro_fmt), mese=lambda d: d["mese"].map(mese_breve))
     tab = tab[["id", "stato", "persona", "importo", "data", "categoria", "descrizione", "riferimento", "mese",
                "rimborsata_il"]].reset_index(drop=True)
+    tab.insert(0, "elimina", False)
     # larghezze fisse e strette: tutte le colonne stanno nella pagina senza scorrere di lato
     ed = st.data_editor(tab, hide_index=True, width="stretch", key=f"ed_spese_{st.session_state.get('versione', 0)}",
-                        disabled=[c for c in tab.columns if c != "stato"],
+                        disabled=[c for c in tab.columns if c not in ("stato", "elimina")],
                         column_config={
                             "id": None,
+                            "elimina": st.column_config.CheckboxColumn("Elimina", width=70),
                             "stato": st.column_config.SelectboxColumn("Stato", options=STATI_SPESA, required=True,
                                                                       width=110),
                             "persona": st.column_config.TextColumn("Persona", width=110),
@@ -615,6 +618,33 @@ def gestione_stati(spese: pd.DataFrame, utente: dict) -> None:
     if cambi and st.button(f"Salva stato ({quante(len(cambi), 'spesa', 'spese')})", type="primary"):
         scrivi("spese", lambda df: applica_stati(df, cambi, utente["nome"]),
                f"Spese: aggiornato lo stato di {len(cambi)}")
+        st.rerun()
+    elimina_spese(spese, sorted(ed.loc[ed["elimina"], "id"]))
+
+
+def elimina_spese(spese: pd.DataFrame, da_togliere: list[str]) -> None:
+    """Cancellazione definitiva, solo admin, con conferma come per le ore registrate."""
+    if not da_togliere:
+        st.session_state.pop("spese_da_eliminare", None)
+        return
+    if st.session_state.get("spese_da_eliminare") != da_togliere:
+        if st.button(f"Elimina {quante(len(da_togliere), 'spesa selezionata', 'spese selezionate')}"):
+            st.session_state["spese_da_eliminare"] = da_togliere
+            st.rerun()
+        return
+    totale = importi(spese[spese["id"].isin(da_togliere)])["importo"].sum()
+    st.warning(f"Stai per eliminare {quante(len(da_togliere), 'spesa', 'spese')} ({euro_fmt(totale)}). "
+               "L'operazione non si può annullare.")
+    c1, c2, _ = st.columns([1, 1, 3])
+    if c1.button("Sì, elimina", type="primary", width="stretch", key="conferma_elimina_spese"):
+        scrivi("spese", lambda df: df[~df["id"].isin(da_togliere)], f"Spese: eliminate {len(da_togliere)}")
+        st.session_state.pop("spese_da_eliminare", None)
+        st.session_state["esito_rimborso"] = ("Eliminata 1 spesa." if len(da_togliere) == 1
+                                              else f"Eliminate {len(da_togliere)} spese.")
+        st.rerun()
+    if c2.button("Annulla", width="stretch", key="annulla_elimina_spese"):
+        st.session_state.pop("spese_da_eliminare", None)
+        st.session_state["versione"] = st.session_state.get("versione", 0) + 1  # toglie le spunte
         st.rerun()
 
 
